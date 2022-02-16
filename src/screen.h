@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <iostream>
+#include <list>
 #include <map>
 #include <string>
 #include <term.h>
@@ -7,17 +8,14 @@
 #include <utility>
 #include <vector>
 
-const int SCREEN_X = 40;
-const int SCREEN_Y = 0;
-
-enum Type { plane, bullet, enemy, undefined };
+const int SCREEN_X = 80;
+const int SCREEN_Y = 20;
 
 class Loc {
   protected:
     int x, y;
 
   public:
-    Type id = undefined;
     Loc(int x, int y) : x(x), y(y) {}
 
     int getX() { return x; }
@@ -33,14 +31,17 @@ class Loc {
 };
 
 class Base {
-  public:
+  protected:
     Loc loc;
 
+  public:
     Base(int x, int y) : loc(x, y) {}
     bool operator<(const Base &other) const { return loc < other.loc; }
     bool operator==(const Base &other) const { return loc == other.loc; }
 
-    virtual std::string getPic()     = 0;
+    Loc &getLoc() { return loc; }
+
+    virtual std::string &getPic()    = 0;
     virtual int getSpeed()           = 0;
     virtual void setSpeed(int speed) = 0;
 
@@ -49,41 +50,65 @@ class Base {
 
 class Plane : public Base {
   private:
+    std::string pic = "-<-`";
+
   public:
     Plane(int x, int y) : Base(x, y) {}
 
-    std::string getPic() override { return "-<-`"; }
+    std::string &getPic() override { return pic; }
     int getSpeed() override { return 1; }
-    void setSpeed(int speed) override {}
+    void setSpeed(int speed) override { throw std::runtime_error("Plane speed cannot be set"); }
 };
 
 class Bullet : public Base {
   private:
+    std::string pic = "+";
     int speed;
 
   public:
     Bullet(int x, int y, int speed = 1) : Base(x, y), speed(speed) {}
 
-    std::string getPic() override { return "~"; }
+    std::string &getPic() override { return pic; }
     int getSpeed() override { return speed; }
     void setSpeed(int speed) override { this->speed = speed; }
 };
 
 class Enemy : public Base {
   private:
+    std::string pic = "X";
     int speed;
 
   public:
     Enemy(int x, int y, int speed) : Base(x, y), speed(speed) {}
 
-    std::string getPic() override { return "X"; }
+    std::string &getPic() override { return pic; }
     int getSpeed() override { return speed; }
     void setSpeed(int speed) override { this->speed = speed; }
 };
 
 class Screen {
   private:
+    inline static void addToMap(Loc &loc, std::string str) {
+        for (auto i = 0; i < str.size(); i++)
+            map[loc.getY()][(loc.getX() + i) % SCREEN_X] = str[i];
+        // copy(str.begin(), str.end(), &map[loc.getY()][(loc.getX()) % SCREEN_X]);
+    }
+    inline static void printMap() {
+        for (auto &i : map) {
+            for (auto &j : i)
+                std::cout << j;
+            std::cout << std::endl;
+        }
+    }
+    // inline static void rmFromMap(Loc &loc, int len) {
+    //     for (auto i = 0; i < len; i++)
+    //         map[loc.getY()][(loc.getX() + i) % SCREEN_X] = ' ';
+    // }
+    static std::vector<std::vector<char>> map;
+
   public:
+    Screen() {}
+
     static void clearScreen() {
         if (!cur_term) {
             int result;
@@ -92,45 +117,30 @@ class Screen {
                 return;
         }
         putp(tigetstr("clear"));
+
+        // for (auto &i : map)
+        //     for (auto &j : i)
+        //         j = ' ';
     }
 
-    void flushScreen(Plane &myPlane, std::vector<Enemy *> &enemies) {
+    static void flushScreen(Plane &myPlane, std::vector<Enemy> &enemies, std::list<Bullet> &bullets) {
         using namespace std;
-        std::vector<Base *> elems(enemies.begin(), enemies.end());
-        elems.push_back(&myPlane);
 
-        sort(elems.begin(), elems.end(), Base::cmp);
+        for (auto &e : enemies)
+            addToMap(e.getLoc(), e.getPic());
+        addToMap(myPlane.getLoc(), myPlane.getPic());
+        for (auto &b : bullets)
+            addToMap(b.getLoc(), b.getPic());
+
+        printMap();
+
+        for (auto &e : enemies)
+            addToMap(e.getLoc(), string(e.getPic().size(), ' '));
+        addToMap(myPlane.getLoc(), string(myPlane.getPic().size(), ' '));
+        for (auto &b : bullets)
+            addToMap(b.getLoc(), string(b.getPic().size(), ' '));
+
         clearScreen();
-        bool lastShadow = false;
-        for (auto itor = elems.begin(); itor != elems.end(); itor++) {
-            Loc &loc = (*itor)->loc;
-            if (itor == elems.begin()) {
-                cout << string(loc.getY(), '\n') << string(loc.getX(), ' ') << (*itor)->getPic();
-            } else {
-                auto &prevLoc = (*(itor - 1))->loc;
-                if (loc.getY() == myPlane.loc.getY() && loc.getX() > myPlane.loc.getX() && loc.getX() - myPlane.loc.getX() < 4) {
-                    lastShadow = true;
-                    continue;
-                } else
-                    lastShadow = false;
-
-                int deltaY = loc.getY() - prevLoc.getY();
-                int deltaX = loc.getX() - prevLoc.getX();  // delta of first pixel, not (next.head - prev.tail)
-                // int headTailX = deltaX - int((*itor)->getPic().size());  // used for graph shadow  // !! otherwise dX-size is int and this expr is tautology
-
-                if (deltaY == 0) {
-                    if (!dynamic_cast<Plane *>(*(itor - 1)) || deltaX >= myPlane.getPic().size()) {
-                        cout << string(deltaX - (int)((*(itor - 1))->getPic().size()), ' ') << (*itor)->getPic();
-                        // headTailX = deltaX + headTailX;
-                    }
-                } else if (deltaY > 0) {
-                    cout << string(deltaY, '\n') << string(loc.getX(), ' ') << (*itor)->getPic();
-                } else {
-                    throw std::runtime_error("deltaY < 0");
-                }
-            }
-        }
-        cout << string(SCREEN_Y - elems.back()->loc.getY(), '\n') << endl;
     }
 };
 
